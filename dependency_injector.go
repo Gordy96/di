@@ -3,17 +3,17 @@ package di
 import "reflect"
 
 type entry struct {
-	creator interface{}
+	creator     interface{}
 	creatorType reflect.Type
-	instance interface{}
-	singleton bool
+	instance    interface{}
+	singleton   bool
 }
 
 type DI struct {
-	entries map[reflect.Kind]*entry
+	entries map[reflect.Type]*entry
 }
 
-func (di *DI) put (source interface{}, singleton bool) error {
+func (di *DI) put(source interface{}, singleton bool) error {
 
 	sourceType := reflect.TypeOf(source)
 	sourceKind := sourceType.Kind()
@@ -23,18 +23,18 @@ func (di *DI) put (source interface{}, singleton bool) error {
 	}
 
 	retType := sourceType.Out(0)
-	retKind := retType.Kind()
+	//retKind := retType.Kind()
 
-	di.entries[retKind] = &entry{source, sourceType, nil, singleton}
+	di.entries[retType] = &entry{source, sourceType, nil, singleton}
 
 	return nil
 }
 
-func (di *DI) Singleton (source interface{}) error {
+func (di *DI) Singleton(source interface{}) error {
 	return di.put(source, true)
 }
 
-func (di *DI) Register (source interface{}) error {
+func (di *DI) Register(source interface{}) error {
 	return di.put(source, false)
 }
 
@@ -47,9 +47,9 @@ func (di *DI) Get(callback interface{}) error {
 	}
 
 	requestedType := cbType.In(0)
-	requestedKind := requestedType.Kind()
+	//requestedKind := requestedType.Kind()
 
-	entry, found := di.entries[requestedKind]
+	entry, found := di.entries[requestedType]
 	if !found {
 		return DependencyNotFound{}
 	}
@@ -71,8 +71,8 @@ func (di *DI) create(entry *entry) (interface{}, error) {
 	numins := entry.creatorType.NumIn()
 	for i := 0; i < numins; i++ {
 		inType := entry.creatorType.In(i)
-		inKind := inType.Kind()
-		in, found := di.entries[inKind]
+		//inKind := inType.Kind()
+		in, found := di.entries[inType]
 		if !found {
 			return nil, DependencyNotFound{}
 		}

@@ -15,16 +15,23 @@ func (f *Foo) Do() {
 	fmt.Printf("now is: %s\n", f.i)
 }
 
+type Bar struct {
+}
+
+func (b *Bar) Do() {
+
+}
+
 func TestDI(t *testing.T) {
 	var err error
-	di := DI{map[reflect.Kind]*entry{}}
+	di := DI{map[reflect.Type]*entry{}}
 	err = di.Register(func(i string) *Foo {
 		return &Foo{i}
 	})
 	if err != nil {
 		t.Fail()
 	}
-	err = di.Register(func () string {
+	err = di.Register(func() string {
 		return time.Now().String()
 	})
 	if err != nil {
@@ -41,5 +48,13 @@ func TestDI(t *testing.T) {
 	})
 	if err != nil {
 		t.Fail()
+	}
+	err = di.Get(func(b *Bar) {
+		b.Do()
+	})
+	if err == nil {
+		t.Fail()
+	} else {
+		t.Log(err)
 	}
 }
