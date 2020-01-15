@@ -1,57 +1,62 @@
 package di
 
-import "reflect"
+import (
+	mapset "github.com/deckarep/golang-set"
+	"reflect"
+)
 
 type entry struct {
-	creator     interface{}
-	creatorType reflect.Type
+	constructor interface{}
 	instance    interface{}
 	singleton   bool
 }
 
-type DI struct {
-	entries map[reflect.Type]*entry
+func NewDI() *DI {
+	return &DI{
+		entries: map[reflect.Type]*entry{},
+		_seal:   true,
+	}
 }
 
-func (di *DI) put(source interface{}, singleton bool) error {
-
-	sourceType := reflect.TypeOf(source)
-	sourceKind := sourceType.Kind()
-
-	if sourceKind != reflect.Func {
-		return NotAFunc{}
-	}
-
-	retType := sourceType.Out(0)
-	//retKind := retType.Kind()
-
-	di.entries[retType] = &entry{source, sourceType, nil, singleton}
-
-	return nil
+type DI struct {
+	entries map[reflect.Type]*entry
+	_seal   bool
 }
 
 func (di *DI) Singleton(source interface{}) error {
 	return di.put(source, true)
 }
 
-func (di *DI) Register(source interface{}) error {
+func (di *DI) Factory(source interface{}) error {
 	return di.put(source, false)
+}
+
+func (di *DI) Ensure() error {
+	return di.resolve()
+}
+
+func (di *DI) Register(callback func(*DI) error) error {
+	di.unseal()
+	defer di.seal()
+	err := callback(di)
+	if err != nil {
+		return err
+	}
+	err = di.resolve()
+	return err
 }
 
 func (di *DI) Get(callback interface{}) error {
 	cbType := reflect.TypeOf(callback)
 	cbKind := cbType.Kind()
-
 	if cbKind != reflect.Func {
 		return NotAFunc{}
 	}
-
 	requestedType := cbType.In(0)
-	//requestedKind := requestedType.Kind()
 
 	entry, found := di.entries[requestedType]
 	if !found {
-		return DependencyNotFound{}
+		return DependencyNotFound{requestedType}
 	}
 
 	temp, err := di.create(entry)
@@ -59,6 +64,61 @@ func (di *DI) Get(callback interface{}) error {
 		return err
 	}
 	reflect.ValueOf(callback).Call([]reflect.Value{reflect.ValueOf(temp)})
+	return nil
+}
+
+func (di *DI) sealed() bool {
+	return di._seal
+}
+func (di *DI) seal() {
+	di._seal = true
+}
+func (di *DI) unseal() {
+	di._seal = false
+}
+
+func (di *DI) put(source interface{}, singleton bool) error {
+	if di.sealed() {
+		return InvalidInvocation{}
+	}
+	sourceType := reflect.TypeOf(source)
+	sourceKind := sourceType.Kind()
+	if sourceKind != reflect.Func {
+		return NotAFunc{}
+	}
+	retType := sourceType.Out(0)
+	di.entries[retType] = &entry{source, nil, singleton}
+	return nil
+}
+
+func (di *DI) resolve() error {
+	graph := make(map[reflect.Type]mapset.Set)
+	for entryType, entry := range di.entries {
+		dependencySet := mapset.NewSet()
+		constructorType := reflect.TypeOf(entry.constructor)
+		for i := 0; i < constructorType.NumIn(); i++ {
+			dependencySet.Add(constructorType.In(i))
+		}
+		graph[entryType] = dependencySet
+	}
+	for len(graph) != 0 {
+		readySet := mapset.NewSet()
+		for entryType, deps := range graph {
+			if deps.Cardinality() == 0 {
+				readySet.Add(entryType)
+			}
+		}
+		if readySet.Cardinality() == 0 {
+			return CircularDependency{}
+		}
+		for entryType := range readySet.Iter() {
+			delete(graph, entryType.(reflect.Type))
+		}
+		for entryType, deps := range graph {
+			diff := deps.Difference(readySet)
+			graph[entryType] = diff
+		}
+	}
 
 	return nil
 }
@@ -68,13 +128,12 @@ func (di *DI) create(entry *entry) (interface{}, error) {
 		return entry.instance, nil
 	}
 	var deps []reflect.Value
-	numins := entry.creatorType.NumIn()
-	for i := 0; i < numins; i++ {
-		inType := entry.creatorType.In(i)
-		//inKind := inType.Kind()
+	constructorType := reflect.TypeOf(entry.constructor)
+	for i := 0; i < constructorType.NumIn(); i++ {
+		inType := constructorType.In(i)
 		in, found := di.entries[inType]
 		if !found {
-			return nil, DependencyNotFound{}
+			return nil, DependencyNotFound{inType}
 		}
 		temp, err := di.create(in)
 		if err != nil {
@@ -82,7 +141,7 @@ func (di *DI) create(entry *entry) (interface{}, error) {
 		}
 		deps = append(deps, reflect.ValueOf(temp))
 	}
-	ret := reflect.ValueOf(entry.creator).Call(deps)
+	ret := reflect.ValueOf(entry.constructor).Call(deps)
 	if len(ret) > 1 {
 		return nil, ret[1].Interface().(error)
 	}
@@ -92,15 +151,5 @@ func (di *DI) create(entry *entry) (interface{}, error) {
 		}
 		return ret[0].Interface(), nil
 	}
-	return nil, DependencyNotFound{}
-}
-
-func (di *DI) Ensure() error {
-	for _, e := range di.entries {
-		_, err := di.create(e)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return nil, DependencyNotFound{constructorType.Out(0)}
 }
